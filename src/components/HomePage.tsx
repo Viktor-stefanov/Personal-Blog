@@ -1,9 +1,10 @@
 import Image from "next/image";
 import PersonalProfile from "./PersonalProfile";
+import RecentPosts from "./RecentPosts";
 
 const HomePage = () => {
   return (
-    <div className="relative">
+    <div className="relative ">
       <Image
         src="/background.webp"
         alt="Cartoonish Image of a Circuit Board"
@@ -11,14 +12,10 @@ const HomePage = () => {
         height={1080}
         className="absolute top-0 left-0 -z-10"
       />
+      <div className="w-[70%] m-auto p-4 bg-background text-primary border-2 border-primary border-dashed border-opacity-40">
+        <PersonalProfile />
 
-      <PersonalProfile />
-
-      <div className="bg-background text-primary">
-        <h2 className="text-2xl text-center">Recent Blog Posts</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* Display the most recent blog posts. */}
-        </div>
+        <RecentPosts />
       </div>
     </div>
   );
