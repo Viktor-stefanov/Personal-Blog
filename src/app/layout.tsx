@@ -1,7 +1,15 @@
 import { Metadata } from "next";
-import "./globals.css";
+import { Oxanium } from "next/font/google";
 import NavBar from "@/components/NavBar";
 import Footer from "@/components/Footer";
+import "./globals.css";
+
+const font = Oxanium({
+  subsets: ["latin"],
+  weight: "400",
+  display: "swap",
+  variable: "--font-oxanium",
+});
 
 export const metadata: Metadata = {
   title: "Dev Blog",
@@ -15,9 +23,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="bg-background">
-        <NavBar>{children}</NavBar>
+    <html lang="en" className={font.variable}>
+      <body className="bg-background font-sans">
+        <NavBar />
+        {children}
         <Footer />
       </body>
     </html>

@@ -1,7 +1,7 @@
 import { Blog } from "@/types/blog";
 import Image from "next/image";
-import Tag from "@/components/icons/Tag";
 import Link from "next/link";
+import { HiTag as Tag } from "react-icons/hi2";
 
 const PostCard = ({ post }: Readonly<{ post: Blog }>) => {
   return (
@@ -25,7 +25,7 @@ const PostCard = ({ post }: Readonly<{ post: Blog }>) => {
         </div>
         <div className="flex justify-between">
           <div className="flex gap-2">
-            <Tag />
+            <Tag className="size-5" />
             {post.tags.map((tag, idx) => (
               <span key={idx}>{tag}</span>
             ))}

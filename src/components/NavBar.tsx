@@ -1,13 +1,11 @@
 "use client";
 
+import { HiArrowRight as ArrowRight } from "react-icons/hi2";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import ArrowRight from "./icons/ArrowRight";
 
-const NavBar = ({ children }: Readonly<{ children: React.ReactNode }>) => {
+const NavBar = () => {
   const pathName = usePathname();
-
-  console.log(pathName);
 
   return (
     <>
@@ -15,20 +13,22 @@ const NavBar = ({ children }: Readonly<{ children: React.ReactNode }>) => {
         <div className="mx-[15%] flex justify-between">
           <div className="my-4 p-2">
             <ul className="flex gap-4 text-primary text-xl">
-              <li className="hover:text-secondary ">
-                <Link href="/">
-                  {pathName === "/" && <ArrowRight />}Viktor Stefanov
+              <li className="hover:text-secondary">
+                <Link href="/" className="flex items-center">
+                  {pathName === "/" && <ArrowRight />}
+                  <span>Viktor Stefanov</span>
                 </Link>
               </li>
               <li className="hover:text-secondary">
-                <Link href="/posts">
-                  {pathName === "/posts" && <ArrowRight />}Blog Posts
+                <Link href="/posts" className="flex items-center">
+                  {pathName === "/posts" && <ArrowRight />}
+                  Blog Posts
                 </Link>
               </li>
               <li className="hover:text-secondary">
-                {pathName === "/about" && <ArrowRight />}
-                <Link href="/about">
-                  {pathName === "/posts" && <ArrowRight />}About
+                <Link href="/about" className="flex items-center">
+                  {pathName === "/posts" && <ArrowRight />}
+                  About
                 </Link>
               </li>
             </ul>
@@ -38,7 +38,6 @@ const NavBar = ({ children }: Readonly<{ children: React.ReactNode }>) => {
           </div>
         </div>
       </nav>
-      {children}
     </>
   );
 };

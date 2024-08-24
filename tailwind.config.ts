@@ -8,6 +8,9 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["var(--font-oxanium)"],
+      },
       colors: {
         background: "#000",
         primary: "#e4ecfd",
