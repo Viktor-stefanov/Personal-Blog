@@ -2,9 +2,9 @@ import Image from "next/image";
 
 const PersonalProfile = () => {
   return (
-    <div className="min-h-[85vh] text-center flex flex-col justify-center gap-12">
+    <div className="text-center flex flex-col justify-center gap-8">
       <div>
-        <h1 className="text-4xl mt-24 my-8">Viktor Stefanov</h1>
+        <h1 className="text-4xl my-8">Viktor Stefanov</h1>
         <p className="text-lg">
           “Our doubts are traitors, And make us lose the good we oft might win,
           By fearing to attempt.” – William Shakespeare

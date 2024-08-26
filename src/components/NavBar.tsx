@@ -9,9 +9,9 @@ const NavBar = () => {
 
   return (
     <>
-      <nav className="fixed top-0 left-0 w-[100%] bg-background z-10 border-b-2 border-dashed border-opacity-40 border-primary">
-        <div className="mx-[15%] flex justify-between">
-          <div className="my-4 p-2">
+      <nav className="fixed top-0 left-0 h-16 w-[100%] bg-background z-20 border-b-2 border-dashed border-opacity-40 border-primary">
+        <div className="mx-[15%] h-full flex justify-between">
+          <div className="my-auto p-2">
             <ul className="flex gap-4 text-primary text-xl">
               <li className="hover:text-secondary">
                 <Link href="/" className="flex items-center">
@@ -22,18 +22,18 @@ const NavBar = () => {
               <li className="hover:text-secondary">
                 <Link href="/posts" className="flex items-center">
                   {pathName === "/posts" && <ArrowRight />}
-                  Blog Posts
+                  <span>Blog Posts</span>
                 </Link>
               </li>
               <li className="hover:text-secondary">
                 <Link href="/about" className="flex items-center">
-                  {pathName === "/posts" && <ArrowRight />}
-                  About
+                  {pathName === "/about" && <ArrowRight />}
+                  <span>About</span>
                 </Link>
               </li>
             </ul>
           </div>
-          <div className="m-4 p-2">
+          <div className="my-auto p-2">
             <input type="text" placeholder="Search blog posts..." />
           </div>
         </div>
