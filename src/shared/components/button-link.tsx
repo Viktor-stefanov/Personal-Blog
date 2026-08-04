@@ -1,25 +1,34 @@
+import * as React from "react";
 import NextLink from "next/link";
+import { ButtonVariant, Size } from "../types/ui";
 import { cn } from "../utils/cn";
 
-export type LinkVariant = "default" | "external" | "quiet" | "bare";
-
-export function Link({
-  variant = "default",
-  className,
-  href,
-  ...rest
-}: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
-  variant?: LinkVariant;
+type ButtonLinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
   href: string;
-}) {
-  const props = {
-    className: cn("nav-item", className || ""),
-    "data-variant": variant === "default" ? undefined : variant,
-    ...rest,
-  };
-  return variant === "external" ? (
-    <a href={href} target="_blank" rel="noreferrer noopener" {...props} />
-  ) : (
-    <NextLink href={new URL(href)} {...props} />
-  );
-}
+  variant?: ButtonVariant;
+  size?: Size;
+  block?: boolean;
+};
+
+const EXTERNAL_HREF = /^https?:\/\//i;
+
+export const ButtonLink = React.forwardRef<HTMLAnchorElement, ButtonLinkProps>(
+  function ButtonLink(
+    { variant = "outline", size = "md", block, className, href, ...rest },
+    ref,
+  ) {
+    const props = {
+      ref,
+      className: cn("btn", className || ""),
+      "data-variant": variant,
+      "data-size": size === "md" ? undefined : size,
+      "data-block": block || undefined,
+      ...rest,
+    };
+    return EXTERNAL_HREF.test(href) ? (
+      <a href={href} target="_blank" rel="noreferrer noopener" {...props} />
+    ) : (
+      <NextLink href={href} {...props} />
+    );
+  },
+);

@@ -1,0 +1,206 @@
+export const metadata = {
+  slug: "central-ai-service-part-2",
+  title:
+    "How we built a Central AI service and why it was one of the best decisions we made",
+  date: "2026-07-14",
+  topic: "software",
+  duration: "10 min",
+  tags: ["Python", "FastAPI", "AAI", "LLM"],
+  excerpt:
+    "Part two, on the technical implementation: model aliasing through a YAML config, overlay files for per-use-case overrides, and structured logging that answers who is spending what.",
+  pinned: true,
+};
+
+In the first part of the article my colleague Steven Glauer outlined the problem
+we faced while developing a GenAI platform and how we managed to solve it. Today
+we delve deeper into the technical implementation: configuration design, model
+aliasing, logging, cost tracking, and lessons learned along the way.
+
+## 1. Zero-effort model switching
+
+Every time a model was updated or a use case needed to migrate to a smaller,
+cheaper model for simpler tasks, the same process repeated itself: change the
+code, open a PR, wait for review, get approval, deploy to all required
+environments. For a single use case this is unremarkable. For 20, 30, or 40+ use
+cases spread across separate repositories, it becomes a significant and
+repetitive operational burden: the same change, applied manually, N times.
+
+The solution is quite elegant. In a base YAML configuration file we created a
+mapping between common GenAI use patterns and a concrete model:
+
+```yaml
+aliases:
+  default-chat: gpt-5
+  summarization: gpt-4.1
+  fast-chat: haiku-4.5
+```
+
+The API contract then requires callers to specify which alias they want, rather
+than a model name directly:
+
+```json
+{
+  "alias": "default-chat",
+  ...
+}
+```
+
+Alias resolution is a simple map lookup, cached in memory, executed in a
+middleware layer that runs before the request handler. It is a near-instant
+operation with no database call and no network hop. When a new model outperforms
+the current `default-chat` in evaluation, the mapping is updated once in the
+central service and every consumer immediately benefits from it, with zero
+changes on their side.
+
+### Overlay configurations
+
+What happens when a specific use case needs a different model for a particular
+task, for example pinning their summarization feature to a specific model
+version rather than the shared default?
+
+For this we introduced the concept of an **overlay configuration file**. An
+overlay contains only the fields it wants to override from the base config:
+
+```yaml
+# default-chat-gpt-54.yaml
+aliases:
+  default-chat: gpt-5.4
+```
+
+The filename describes what it overrides. When a caller passes an overlay in the
+request body, the service merges it on top of the base config at lookup time:
+
+```json
+{
+  "alias": "default-chat",
+  "overlay": "default-chat-gpt-54"
+}
+```
+
+The resulting resolved model is `gpt-5.4` for this caller, while all other
+consumers using `default-chat` without an overlay continue to get `gpt-5`. If
+the overlay field is omitted, the service falls back to the base configuration
+values.
+
+### Memory and lookup complexity
+
+At startup, the service loads all overlay files and merges each with the base
+config, producing a fully resolved map per overlay. The total memory footprint
+is O(N) — the base config plus N overlays — and lookups are O(1): two map
+accesses of the form `config["default-chat-gpt-54"]["default-chat"]`. Even at a
+large number of overlays this is negligible.
+
+## 2. Logging and cost tracking
+
+With a service handling requests from 35+ use cases, observability is not
+optional; it is a first-class concern. The logging layer needs to answer two
+questions at any point in time: _is the service healthy?_ and _who is spending
+what?_
+
+### What we log
+
+Every request that passes through the service emits a single structured log
+entry capturing the following fields:
+
+- **Caller identity** — each request body includes a use case identifier (e.g.
+  `"use_case": "invoice-summarizer"`). This is extracted early in the request
+  lifecycle and attached to every subsequent log record for that request, giving
+  full traceability from a single log line back to the originating consumer.
+- **Model and alias** — both the resolved alias (e.g. `summarization`) and the
+  concrete model name (e.g. `gpt-4.1`) are logged. This distinction matters:
+  when a model is swapped behind an alias, you want to correlate any behavioural
+  or cost changes to the exact moment the mapping changed, not guess at it after
+  the fact.
+- **Token counts** — prompt tokens and completion tokens are logged separately,
+  as returned in the provider response. Keeping them separate is intentional:
+  prompt tokens and completion tokens are priced differently by every major
+  provider, and collapsing them into a single total throws away information you
+  will eventually want.
+- **Cost** — computed from the provider response token counts multiplied against
+  an internal price table keyed by model name. Cost computation is centralised
+  in the service, so no consumer needs to know or care about pricing.
+- **Latency** — wall-clock time from the moment a request enters the service to
+  the moment a response is returned to the caller, measured at the middleware
+  level. This wraps the full execution path: alias resolution, provider
+  round-trip, and response serialisation.
+- **Request and response payloads** — the full message array and provider
+  response are logged. This is intentionally verbose, and worth it. When a use
+  case reports unexpected model behaviour, having the exact payload removes all
+  ambiguity. Log retention policies and Grafana dashboard filters keep this from
+  becoming noise in practice.
+
+### Implementation
+
+The stack is deliberately simple: Python's standard `logging` module, emitting
+structured JSON records, shipped to Grafana. No custom logging framework, no
+third-party SDK, no vendor lock-in. The structured format is what makes this
+powerful; every field above is a key in the JSON object, not buried in a
+free-text message string.
+
+```python
+logger.info("request_completed", extra={
+    "use_case": use_case_id,
+    "alias": alias,
+    "model": resolved_model,
+    "prompt_tokens": usage.prompt_tokens,
+    "completion_tokens": usage.completion_tokens,
+    "cost_usd": computed_cost,
+    "latency_ms": latency,
+})
+```
+
+A single structured record per request means a single Grafana log panel query
+gives you cost by use case, token burn by model, or p95 latency over the last 24
+hours, with no joins and no post-processing.
+
+### Cost tracking
+
+The price table lives in a YAML file maintained alongside the base
+configuration:
+
+```yaml
+pricing:
+  gpt-5:
+    prompt_per_1k: 0.0025
+    completion_per_1k: 0.0100
+  gpt-4.1:
+    prompt_per_1k: 0.0020
+    completion_per_1k: 0.0080
+  haiku-4.5:
+    prompt_per_1k: 0.0001
+    completion_per_1k: 0.0005
+```
+
+Cost is computed after every successful provider response:
+
+```python
+def compute_cost(model: str, usage: Usage) -> float:
+    pricing = config["pricing"][model]
+    prompt_cost = (usage.prompt_tokens / 1000) * pricing["prompt_per_1k"]
+    completion_cost = (usage.completion_tokens / 1000) * pricing["completion_per_1k"]
+    return prompt_cost + completion_cost
+```
+
+When a provider updates pricing, there is exactly one place to change it. Every
+use case immediately reflects the updated cost figures in Grafana without a
+single line of application code changing. This is the same principle as model
+aliasing applied to pricing: centralise the configuration, let the consumers be
+oblivious.
+
+### What this enables
+
+With structured logs flowing into Grafana, the dashboards we run cover:
+
+- **Cost by use case** — which consumer is driving the most spend, broken down
+  by day
+- **Token efficiency** — prompt-to-completion ratio per use case, which surfaces
+  things like unnecessarily verbose system prompts
+- **Model distribution** — how traffic splits across models, immediately useful
+  after rolling out an alias change
+- **Error rates and latency percentiles** — p50/p95/p99 per endpoint, with use
+  case as a filter dimension
+
+None of this required a dedicated observability platform or a custom metrics
+pipeline. Structured logging into Grafana, done consistently, covers the vast
+majority of what both engineering and business stakeholders actually need to
+ask.

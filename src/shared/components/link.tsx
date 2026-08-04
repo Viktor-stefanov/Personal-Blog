@@ -1,8 +1,6 @@
-import * as React from "react";
-import { cn } from "../utils/cn";
 import NextLink from "next/link";
-
-type LinkVariant = "default" | "external" | "quiet" | "bare";
+import { LinkVariant } from "../types/ui";
+import { cn } from "../utils/cn";
 
 export function Link({
   variant = "default",
@@ -19,7 +17,7 @@ export function Link({
     ...rest,
   };
   return variant === "external" ? (
-    <a href={href} target="_blank" rel="noreferrer noopenner" {...props} />
+    <a href={href} target="_blank" rel="noreferrer noopener" {...props} />
   ) : (
     <NextLink href={href} {...props} />
   );

@@ -1,25 +1,32 @@
 @import "tailwindcss";
 
 @theme {
-  /* colors */
-  --color-primary: #ef5f68;
-  --color-secondary: #e88464;
+  --color-bg: #0a0708;
+  --color-surface: #150f11;
+  --color-code: #0e0a0b;
+  --color-border: #2a1c1f;
+  --color-border-strong: #3b292d;
+
+  --color-text-bright: #f8eeee;
+  --color-text: #d8c8ca;
   --color-muted: #8d7a7d;
   --color-dim: #5e4c4f;
-  --color-background: #0a0708;
-  --color-surface: #150f11;
-  --color-text: #d8c8ca;
-  --color-text-bright: #f8eeee;
-  --color-border: #2a1c1f;
-  /* syntax tokens colors */
+  --color-faint: #423436;
+
+  --color-primary: #ef5f68;
+  --color-primary-bright: #ff9098;
+  --color-on-primary: #170406;
+  --color-accent: #e8b464;
+
   --color-tok-kw: #d98cf0;
   --color-tok-str: #e8b464;
   --color-tok-fn: #ef5f68;
   --color-tok-cmt: #6a5457;
   --color-tok-bi: #6fc3d0;
-  /* type */
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-mono);
+
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+
   --text-h1: 46px;
   --text-h1--line-height: 1.05;
   --text-h2: 32px;
@@ -36,10 +43,7 @@
   --text-xs--line-height: 1.5;
   --text-2xs: 11px;
   --text-2xs--line-height: 1.4;
-  /* spacing */
-  --spacing-tight: 0.75rem; /* 12px inside components */
-  --spacing-content: 1.5rem; /* 24px inside a section */
-  --spacing-section: 4rem; /* 64px between sections */
+
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 12px;
@@ -49,7 +53,7 @@
   --spacing-3xl: 48px;
   --spacing-4xl: 64px;
   --spacing-5xl: 96px;
-  /* miscellaneous */
+
   --radius-card: 6px;
   --radius-ui: 4px;
   --radius-chip: 3px;
@@ -63,23 +67,30 @@
     box-sizing: border-box;
   }
 
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
-    font-family: var(--font-sans);
-    background: var(--color-background);
-    color: var(--color-text);
     margin: 0;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    font-size: var(--text-body);
     line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
+  /* Mono is for structure. Prose opts into sans via <p> / .prose. */
   h1,
   h2,
   h3,
   h4 {
     margin: 0;
-    font-family: var(--font-sans);
-    text-wrap: balance;
+    font-family: var(--font-mono);
     color: var(--color-text-bright);
+    text-wrap: balance;
   }
   h1 {
     font-size: var(--text-h1);
@@ -107,10 +118,10 @@
   p {
     margin: 0;
     font-family: var(--font-sans);
+    font-size: var(--text-body);
     line-height: 1.75;
     color: var(--color-muted);
     text-wrap: pretty;
-    font-size: var(--text-body);
   }
 
   a {
@@ -132,13 +143,14 @@
   }
 
   code,
-  pre,
   kbd,
+  pre,
   samp {
     font-family: var(--font-mono);
   }
 
-  blockquote {
+  blockquote,
+  figure {
     margin: 0;
   }
 
@@ -192,6 +204,16 @@
       opacity: 0;
     }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 @layer components {
@@ -230,7 +252,6 @@
     border-top: 1px solid var(--color-border);
   }
 
-  /* numbered small-caps header: 01 — LATEST                    <SectionLabel> */
   .section-label {
     display: flex;
     align-items: baseline;
@@ -493,7 +514,6 @@
     font-size: var(--text-sm);
     line-height: 1.85;
   }
-  /* plain frame, no accent rail — for nested / secondary terminals */
   .term[data-variant="quiet"] {
     border-left: 1px solid var(--color-border);
   }
@@ -666,7 +686,6 @@
     scroll-snap-align: start;
   }
   @media (max-width: 700px) {
-    /* degrade to a plain stacked list on narrow screens */
     .posts[data-layout="rail"] {
       grid-auto-flow: row;
       grid-auto-columns: auto;
@@ -741,8 +760,15 @@
   .card[data-variant="pinned"] {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 300px;
+    /* explicit tracks so the side slot's `grid-row: 1 / -1` has a last line to
+       resolve against — meta, title, excerpt, then foot absorbing the slack */
+    grid-template-rows: auto auto auto 1fr;
     gap: var(--spacing-2xl);
     padding: 26px;
+  }
+  .card[data-variant="pinned"] > .side {
+    grid-column: 2;
+    grid-row: 1 / -1;
   }
   .card[data-variant="pinned"]:hover {
     transform: none;
@@ -759,6 +785,11 @@
   @media (max-width: 860px) {
     .card[data-variant="pinned"] {
       grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: none;
+    }
+    .card[data-variant="pinned"] > .side {
+      grid-column: 1;
+      grid-row: auto;
     }
     .card[data-variant="pinned"] .title {
       font-size: var(--text-h2);
@@ -889,6 +920,8 @@
     color: inherit;
   }
 
+  /* Source art is black-on-white: inverted, screened onto the dark surface,
+     then multiplied with the brand colour to tint it. */
   .portrait {
     position: relative;
     isolation: isolate;
