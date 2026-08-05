@@ -1,0 +1,134 @@
+export const metadata = {
+  slug: "central-ai-service-part-1",
+  title:
+    "How we built a Central AI service and why it was one of the best decisions we made (Part 1)",
+  date: "2026-07-07",
+  topic: "software",
+  duration: "10 min",
+  tags: ["Python", "FastAPI", "AAI", "LLM"],
+  excerpt:
+    "Part two, on the technical implementation: model aliasing through a YAML config, overlay files for per-use-case overrides, and structured logging that answers who is spending what.",
+  pinned: true,
+};
+
+# The Story Behind Our Central AI Service and Why It Paid Off
+
+_By Viktor Stefanov_
+
+We're building a central GenAI platform for a large insurance company: 20+ use
+cases this year, 50 or more in the long run. Fairly early on we asked ourselves
+what would happen if every one of those use cases simply talked to Azure OpenAI
+directly.
+
+The answer was uncomfortable enough that we did something about it.
+
+## The problem
+
+Direct access looks harmless until you start counting. Every use case manages
+its own API key. Every use case writes its own retry logic — or skips it and
+finds out the hard way. And every time a new model has to be introduced, someone
+edits production code in each individual use case and walks each one through the
+full release process.
+
+That's fine with two use cases. It's a problem with 20. With 50 it stops being
+viable at all.
+
+Three pain points bothered us most.
+
+**Every model change means N deployments.** Models and model versions get
+deprecated on a schedule nobody asks us about, so switching is not a question of
+if but when. Without a central service, one switch means touching every use case
+individually and taking each of them through review, approval and deployment.
+The effort scales directly with the number of use cases — and it is the same
+one-line change every time.
+
+**No visibility into cost.** The requirement was clear from the start: costs
+should be attributable per use case as far as technically possible. But if every
+use case calls the provider on its own, there is no single place where tokens
+are counted, and therefore no honest answer to what any given use case actually
+cost last month.
+
+**No transparent handling of instance failures.** When an Azure OpenAI instance
+is unavailable or a token limit is hit, there is nowhere to deal with it. The
+error goes straight through to the use case, which then has to have an opinion
+about retries and fallbacks. Twenty times over, in twenty slightly different
+ways.
+
+What all three have in common: no place in the architecture owned the problem.
+
+## Why not just a shared repository?
+
+The obvious alternative was a shared library — retry logic, logging to
+Application Insights, API key handling, written once and consumed by every use
+case as a dependency.
+
+That would have worked. It would also have solved a different problem than the
+one we had.
+
+A shared library removes duplicated code. What it does not remove is the
+release. Switching a model still means every use case pulls the new version,
+tests it, and pushes it through the production process. With 20 use cases that
+is 20 pull requests, 20 reviews, 20 deployments — for a configuration change.
+And it cuts the other way too: when the library itself moves on, with new
+features or changed interfaces, its consumers eventually have to follow.
+
+The coupling between use case and model doesn't disappear in that design. It
+just moves into a dependency.
+
+A service breaks it one level higher. The use cases don't know which model they
+are using, and they don't need to. Model changes, failover and configuration
+updates all happen centrally, without anyone touching use case code.
+
+## The solution: a Central AI Service
+
+We built a lightweight proxy that sits between our use cases and Azure OpenAI.
+
+The core of it is the alias. Instead of hardcoding a concrete model like
+`gpt-5`, a use case asks for `model="default-chat"`. Which model sits behind
+that alias is decided by the service, through a central configuration file. The
+use case doesn't know, and doesn't need to.
+
+![Central AI Service architecture: callers on the left reach a FastAPI endpoint, which resolves aliases against config.yml or config.test.yml, applies retry and error handling, routes to one of several Azure OpenAI instances, and logs to Application Insights](/assets/central-ai-service-architecture.png)
+
+On a diagram that is one box of indirection. In day-to-day work it changed how
+we ship.
+
+## What this concretely enables
+
+**One release process per model change, instead of N.** When a new model needs
+to be introduced, we change one entry in the Central AI Service configuration
+and go through the production process exactly once — for the service, not for
+every use case. No use case code is touched, no coordinated deployments across
+teams.
+
+**Testing a new model without changing production code.** A separate
+`config.test.yaml` and a header on the request are enough for the service to
+route that traffic to a new model, while the use cases stay untouched. This is
+deliberately its own mechanism, separate from the per-use-case configuration
+overrides described in the second part: it exists for evaluation, and it is
+meant to be temporary. Each use case has automated tests that check whether the
+new model still behaves the way its feature needs it to. In practice new models
+are at least as good as the ones they replace, so code changes are the exception
+rather than the rule. Only once the evaluation comes back clean does the
+production configuration get updated.
+
+**Cost separation that holds up.** Every request is logged centrally to
+Application Insights, with the use case name and its token usage, so cost can be
+attributed per use case instead of estimated. The monthly cost conversation
+starts from numbers rather than from guesses.
+
+**Failover before the use case notices.** If an Azure OpenAI instance is
+unavailable or a token limit is reached, the service can switch to another
+instance on its own — transparently, before the caller is ever confronted with
+an error.
+
+**Scaling and resilience come with the platform.** Our use cases run on
+Kubernetes, and so does the Central AI Service: automatic scaling under load,
+restarts on failure, zero-downtime deployments. The service is stateless, which
+makes horizontal scaling a non-event.
+
+---
+
+That's the architecture and the reasoning behind it. The second part goes into
+the implementation — how the configuration is laid out, how aliases and overlays
+resolve, and what we log to make cost and latency visible.

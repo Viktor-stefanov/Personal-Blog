@@ -43,7 +43,23 @@ export function LandingPage() {
         </Section>
       ) : null}
 
-      {LATEST_POSTS.length > 0 ? (
+      {LATEST_POSTS.length === 1 ? (
+        <Section>
+          <Container className="flex flex-col gap-xl">
+            <SectionLabel index="02">secondary</SectionLabel>
+            <PostCard
+              variant="accent"
+              href={postPath(LATEST_POSTS[0].slug)}
+              title={LATEST_POSTS[0].title}
+              excerpt={LATEST_POSTS[0].excerpt}
+              date={LATEST_POSTS[0].date}
+              topic={LATEST_POSTS[0].topic}
+              tags={LATEST_POSTS[0].tags}
+              more={`${LATEST_POSTS[0].duration} →`}
+            />
+          </Container>
+        </Section>
+      ) : LATEST_POSTS.length > 1 ? (
         <Section>
           <Container className="flex flex-col gap-xl">
             <SectionLabel index="02" hint={rail ? "scroll →" : undefined}>

@@ -1,32 +1,37 @@
 export const metadata = {
   slug: "central-ai-service-part-2",
   title:
-    "How we built a Central AI service and why it was one of the best decisions we made",
+    "How we built a Central AI service and why it was one of the best decisions we made (Part 2)",
   date: "2026-07-14",
   topic: "software",
   duration: "10 min",
   tags: ["Python", "FastAPI", "AAI", "LLM"],
   excerpt:
     "Part two, on the technical implementation: model aliasing through a YAML config, overlay files for per-use-case overrides, and structured logging that answers who is spending what.",
-  pinned: true,
+  pinned: false,
 };
 
-In the first part of the article my colleague Steven Glauer outlined the problem
-we faced while developing a GenAI platform and how we managed to solve it. Today
-we delve deeper into the technical implementation: configuration design, model
-aliasing, logging, cost tracking, and lessons learned along the way.
+# Central AI Service: configuration, alises and observability
+
+_By Viktor Stefanov_
+
+In the first part I described the problem we ran into while building our GenAI
+platform and the shape of the solution we landed on. This part is about the
+implementation: how the configuration is laid out, how aliases resolve, and what
+we log to keep cost and latency visible.
+
+![Central AI Service architecture: callers on the left reach a FastAPI endpoint, which resolves aliases against config.yml or config.test.yml, applies retry and error handling, routes to one of several Azure OpenAI instances, and logs to Application Insights](/assets/central-ai-service-architecture.png)
 
 ## 1. Zero-effort model switching
 
-Every time a model was updated or a use case needed to migrate to a smaller,
-cheaper model for simpler tasks, the same process repeated itself: change the
-code, open a PR, wait for review, get approval, deploy to all required
-environments. For a single use case this is unremarkable. For 20, 30, or 40+ use
-cases spread across separate repositories, it becomes a significant and
-repetitive operational burden: the same change, applied manually, N times.
+Every model update, and every use case that wanted to move a simpler task to a
+smaller and cheaper model, produced the same ritual: change the code, open a PR,
+wait for review, get approval, deploy to all the required environments. Once,
+that's unremarkable. Thirty times, for the same one-line change, it's just
+overhead with a Jira ticket attached.
 
-The solution is quite elegant. In a base YAML configuration file we created a
-mapping between common GenAI use patterns and a concrete model:
+The fix is unglamorous, which is rather the point. A base YAML file maps common
+GenAI usage patterns to concrete models:
 
 ```yaml
 aliases:
@@ -35,8 +40,12 @@ aliases:
   fast-chat: haiku-4.5
 ```
 
-The API contract then requires callers to specify which alias they want, rather
-than a model name directly:
+Note that the right-hand side isn't OpenAI-only. Foundry gives us Claude models
+as well, and a cheap, fast chat alias is a good place for one. The caller never
+finds out either way, which is rather the point.
+
+The API contract then asks callers to name the alias they want, rather than a
+model:
 
 ```json
 {
@@ -45,20 +54,19 @@ than a model name directly:
 }
 ```
 
-Alias resolution is a simple map lookup, cached in memory, executed in a
-middleware layer that runs before the request handler. It is a near-instant
-operation with no database call and no network hop. When a new model outperforms
-the current `default-chat` in evaluation, the mapping is updated once in the
-central service and every consumer immediately benefits from it, with zero
-changes on their side.
+Resolution is a map lookup against an in-memory copy of the config, done in a
+middleware layer that runs before the request handler — no database call, no
+extra network hop. When a new model beats the current `default-chat` in our
+evaluations, we change the mapping once in the central service and every
+consumer has it immediately, with nothing to do on their side.
 
-### Overlay configurations
+### Overlays, for the cases that need to be different
 
-What happens when a specific use case needs a different model for a particular
-task, for example pinning their summarization feature to a specific model
-version rather than the shared default?
+Sooner or later a use case needs something other than the shared default —
+pinning its summarization feature to one specific model version, say, because
+its prompts were tuned against that version.
 
-For this we introduced the concept of an **overlay configuration file**. An
+For those cases we added the idea of an **overlay configuration file**. An
 overlay contains only the fields it wants to override from the base config:
 
 ```yaml
@@ -67,7 +75,7 @@ aliases:
   default-chat: gpt-5.4
 ```
 
-The filename describes what it overrides. When a caller passes an overlay in the
+The filename says what it changes. When a caller passes an overlay in the
 request body, the service merges it on top of the base config at lookup time:
 
 ```json
@@ -77,65 +85,70 @@ request body, the service merges it on top of the base config at lookup time:
 }
 ```
 
-The resulting resolved model is `gpt-5.4` for this caller, while all other
-consumers using `default-chat` without an overlay continue to get `gpt-5`. If
-the overlay field is omitted, the service falls back to the base configuration
-values.
+That caller resolves to `gpt-5.4`, while everyone else asking for `default-chat`
+still gets `gpt-5`. Leave the field out and you get the base configuration.
 
-### Memory and lookup complexity
+Two things here look similar from the outside and are worth keeping apart.
+Overlays are durable: a use case that needs to sit somewhere other than the
+shared default carries its overlay in every request, for as long as it needs to.
+Evaluating a candidate model before it becomes the default is a different
+mechanism — the `config.test.yaml` and request header from part one — and that
+one is meant to be thrown away once the evaluation is done. We keep them
+separate on purpose. Merge the two and every experiment eventually turns into
+permanent configuration that nobody remembers agreeing to.
 
-At startup, the service loads all overlay files and merges each with the base
-config, producing a fully resolved map per overlay. The total memory footprint
-is O(N) — the base config plus N overlays — and lookups are O(1): two map
-accesses of the form `config["default-chat-gpt-54"]["default-chat"]`. Even at a
-large number of overlays this is negligible.
+### What this costs at runtime
+
+At startup the service loads every overlay file and merges each one with the
+base config, so what sits in memory is a fully resolved map per overlay. Memory
+is O(N) — the base config plus N overlays — and a lookup is two map accesses,
+`config["default-chat-gpt-54"]["default-chat"]`, so O(1). Even with far more
+overlays than we expect to ever have, neither number is worth optimising.
 
 ## 2. Logging and cost tracking
 
-With a service handling requests from 35+ use cases, observability is not
-optional; it is a first-class concern. The logging layer needs to answer two
-questions at any point in time: _is the service healthy?_ and _who is spending
-what?_
+With 30+ use cases behind one service, the logs have to answer two questions at
+any hour of the day: is the service healthy, and who is spending what?
 
 ### What we log
 
 Every request that passes through the service emits a single structured log
-entry capturing the following fields:
+entry.
 
-- **Caller identity** — each request body includes a use case identifier (e.g.
-  `"use_case": "invoice-summarizer"`). This is extracted early in the request
-  lifecycle and attached to every subsequent log record for that request, giving
-  full traceability from a single log line back to the originating consumer.
-- **Model and alias** — both the resolved alias (e.g. `summarization`) and the
-  concrete model name (e.g. `gpt-4.1`) are logged. This distinction matters:
-  when a model is swapped behind an alias, you want to correlate any behavioural
-  or cost changes to the exact moment the mapping changed, not guess at it after
-  the fact.
-- **Token counts** — prompt tokens and completion tokens are logged separately,
-  as returned in the provider response. Keeping them separate is intentional:
-  prompt tokens and completion tokens are priced differently by every major
-  provider, and collapsing them into a single total throws away information you
-  will eventually want.
-- **Cost** — computed from the provider response token counts multiplied against
-  an internal price table keyed by model name. Cost computation is centralised
-  in the service, so no consumer needs to know or care about pricing.
-- **Latency** — wall-clock time from the moment a request enters the service to
-  the moment a response is returned to the caller, measured at the middleware
-  level. This wraps the full execution path: alias resolution, provider
-  round-trip, and response serialisation.
-- **Request and response payloads** — the full message array and provider
-  response are logged. This is intentionally verbose, and worth it. When a use
-  case reports unexpected model behaviour, having the exact payload removes all
-  ambiguity. Log retention policies and Grafana dashboard filters keep this from
-  becoming noise in practice.
+- **Who's calling.** Each request body carries a use case identifier —
+  `"use_case": "invoice-summarizer"` — which we pull out early in the request
+  lifecycle and attach to every subsequent log record for that request. One log
+  line is enough to get back to the consumer that produced it.
+- **Alias and model.** We log both the alias the caller asked for
+  (`summarization`) and the concrete model it resolved to (`gpt-4.1`). Keeping
+  both matters when a model gets swapped behind an alias: you want to line up a
+  change in behaviour or cost with the exact moment the mapping changed, rather
+  than reconstruct it weeks later.
+- **Token counts.** Prompt and completion tokens separately, as the provider
+  reports them. Every major provider prices the two differently, and a single
+  total quietly throws away information you will eventually want back.
+- **Cost.** Computed from the token counts in the provider response against an
+  internal price table keyed by model name. It happens in the service, so no
+  consumer needs to know or care what anything costs per thousand tokens.
+- **Latency.** Wall-clock time from the request entering the service to the
+  response leaving it, measured at the middleware level, so alias resolution,
+  provider round trip and serialisation are all inside the number.
+- **Request and response payloads.** The full message array and the provider
+  response. Verbose, yes — and worth it. When a use case reports that a model
+  did something strange, having the exact payload ends the discussion instead of
+  starting one. Retention policies and dashboard filters keep it from drowning
+  out everything else.
 
 ### Implementation
 
-The stack is deliberately simple: Python's standard `logging` module, emitting
-structured JSON records, shipped to Grafana. No custom logging framework, no
-third-party SDK, no vendor lock-in. The structured format is what makes this
-powerful; every field above is a key in the JSON object, not buried in a
-free-text message string.
+Nothing exotic: Python's standard `logging` module writing structured JSON
+records. They went to Application Insights first, which is still what the
+diagram above shows, and we have since migrated to Grafana. The records
+themselves didn't change for the migration — only what reads them, which is the
+argument for structured logging in one sentence. No custom logging framework
+either, and no third-party SDK. The structure is what makes it useful — every
+field above is its own key in the JSON object, not a fragment buried in a
+free-text message.
 
 ```python
 logger.info("request_completed", extra={
@@ -149,14 +162,13 @@ logger.info("request_completed", extra={
 })
 ```
 
-A single structured record per request means a single Grafana log panel query
-gives you cost by use case, token burn by model, or p95 latency over the last 24
-hours, with no joins and no post-processing.
+One record per request means one Grafana query gives you cost by use case, token
+burn by model, or p95 latency over the last 24 hours — no joins, no
+post-processing.
 
 ### Cost tracking
 
-The price table lives in a YAML file maintained alongside the base
-configuration:
+The price table lives in a YAML file next to the base configuration:
 
 ```yaml
 pricing:
@@ -181,26 +193,27 @@ def compute_cost(model: str, usage: Usage) -> float:
     return prompt_cost + completion_cost
 ```
 
-When a provider updates pricing, there is exactly one place to change it. Every
-use case immediately reflects the updated cost figures in Grafana without a
-single line of application code changing. This is the same principle as model
-aliasing applied to pricing: centralise the configuration, let the consumers be
-oblivious.
+When a provider changes its prices, there is exactly one line to edit. Every use
+case shows the corrected figures in Grafana without a single line of application
+code moving. It's the same idea as model aliasing, applied to money: keep the
+configuration in one place and let the consumers stay unaware of it.
 
-### What this enables
+### What we get out of it
 
-With structured logs flowing into Grafana, the dashboards we run cover:
+The dashboards we actually keep open:
 
-- **Cost by use case** — which consumer is driving the most spend, broken down
-  by day
-- **Token efficiency** — prompt-to-completion ratio per use case, which surfaces
-  things like unnecessarily verbose system prompts
-- **Model distribution** — how traffic splits across models, immediately useful
+- **Cost by use case**, broken down by day — who is driving the spend
+- **Token efficiency**, as the prompt-to-completion ratio per use case, which is
+  a reliable way to notice a system prompt that has quietly grown too long
+- **Model distribution** across traffic, which is the first thing we look at
   after rolling out an alias change
-- **Error rates and latency percentiles** — p50/p95/p99 per endpoint, with use
-  case as a filter dimension
+- **Error rates and latency percentiles**, p50/p95/p99 per endpoint, with use
+  case as a filter
 
-None of this required a dedicated observability platform or a custom metrics
-pipeline. Structured logging into Grafana, done consistently, covers the vast
-majority of what both engineering and business stakeholders actually need to
-ask.
+None of this needed a dedicated observability platform or a metrics pipeline of
+its own. Structured logging into Grafana, done the same way everywhere, covers
+most of what engineering and the business actually ask us.
+
+Looking back, the striking thing is how little of this was clever. Alias
+resolution is a map lookup. Cost tracking is a multiplication. What made both
+worth building was putting them in one place, once, instead of 30 times.
