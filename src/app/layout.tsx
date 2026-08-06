@@ -36,7 +36,6 @@ const footer: Omit<FooterProps, "className"> = {
       label: "site",
       entries: [
         { label: "posts", href: PATHS.posts },
-        { label: "portfolio", href: PATHS.portfolio },
         { label: "about", href: PATHS.about },
       ],
     },
